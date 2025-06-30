@@ -33,12 +33,15 @@ Then let $o_t$ be an indicator variable for the occurrence of precipitation, so 
 
 Finally, let $y_t$ be the amount of precipitation greater than $r_{\text{th}}$ in a 6 hour time step $t$ given the occurrence of precipitation, i.e. $o_t = 1$.
 The model is then specified as follows:
+
 $$
     o_t | p_t \sim \text{Bernoulli}(p_t),
 $$
+
 $$
     y_t | \alpha, \beta_t \sim\text{Gamma}(\alpha,\beta_t),
 $$
+
 $$
     \alpha/\beta_t = \mu_t,
 $$
