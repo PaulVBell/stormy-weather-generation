@@ -53,16 +53,16 @@ $$
 The quantities $p_t$ and $\mu_t$ are related to a linear combination of covariate values via a logit and logarithmic link function respectively:
 
 $$
-g(p_t) = \text{log} \left( \frac{p_t}{1-p_t} \right) = \bm{x}_{t,o}^T \bm{\theta}^{(s)}_o,
+g(p_t) = \text{log} \left( \frac{p_t}{1-p_t} \right) = \mathbf{x}_{t,o}^T \mathbf{\theta}^{(s)}_o,
 $$
 
 $$
-g(\mu_t) = \text{log}(\mu_t) = \bm{x}_{t,a}^T \bm{\theta}^{(s)}_a.
+g(\mu_t) = \text{log}(\mu_t) = \mathbf{x}_{t,a}^T \mathbf{\theta}^{(s)}_a.
 $$
 
 A different regression parameter is modeled for each storm type (superscript $^{(s)}$).
 
-This is a Bayesian framework so parameters $\bm{\theta}^{(s)}_o$, $\bm{\theta}^{(s)}_a$ and $\alpha$ have prior distributions:
+This is a Bayesian framework so parameters $\mathbf{\theta}^{(s)}_o$, $\mathbf{\theta}^{(s)}_a$ and $\alpha$ have prior distributions:
 
 $$
 \theta^{(s)}_i \sim \text{Normal}(0, \sigma_i), 
