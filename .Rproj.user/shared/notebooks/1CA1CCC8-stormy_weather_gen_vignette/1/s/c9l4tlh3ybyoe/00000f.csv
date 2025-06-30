@@ -1,0 +1,7 @@
+"0","crps_df %>%"
+"0","  pivot_longer(c(""yes"", ""no""), names_to = ""types"", values_to = ""crps"") %>%"
+"0","  ggplot() +"
+"0","  geom_density(aes(x = crps)) + "
+"0","  facet_grid(station~types, scales = ""free_y"") + "
+"0","  lims(x = c(-0.5, 2.5))"
+"0",""

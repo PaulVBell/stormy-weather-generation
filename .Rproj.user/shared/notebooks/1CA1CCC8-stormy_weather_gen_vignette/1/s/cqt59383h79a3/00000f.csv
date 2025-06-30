@@ -1,0 +1,1 @@
+"0","get_drop_na_index <- function(x) cumsum(!is.na(x))+(x*is.na(x)) # This function is used to reverse dplyr::drop_na(), by returning a time series of indexes of non NA data split by vectors of appropriate length NAs."

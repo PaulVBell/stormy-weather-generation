@@ -1,0 +1,8 @@
+"0","get_twcrps <- function(y, yrep, mean, sd){"
+"0","  ndraw <- nrow(yrep)"
+"0","  v_x1 <- v(t(yrep)[,1:(ndraw/2)], mean, sd)"
+"0","  v_x2 <- v(t(yrep)[,(1+ndraw/2):ndraw], mean, sd)"
+"0","  twcrps <- (rowMeans(abs(v_x1 - v(y, mean, sd))) - .5 * rowMeans(abs(v_x1 - v_x2)))"
+"0","  "
+"0","  twcrps"
+"0","}"

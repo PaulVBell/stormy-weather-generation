@@ -1,0 +1,7 @@
+"0","# An example of how get_drop_na_index() works."
+"0","print(get_drop_na_index(c(6,4,5,NA,NA,2,NA,NA,NA,3,4)))"
+"1"," [1]  1  2  3 NA NA  4 NA NA NA  5  6
+"
+"0","c(6,4,5,2,3,4)[get_drop_na_index(c(6,4,5,NA,NA,2,NA,NA,NA,3,4))]"
+"1"," [1]  6  4  5 NA NA  2 NA NA NA  3  4
+"

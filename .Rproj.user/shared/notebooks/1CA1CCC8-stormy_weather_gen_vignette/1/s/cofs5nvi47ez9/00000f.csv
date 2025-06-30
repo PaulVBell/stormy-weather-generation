@@ -1,0 +1,4 @@
+"0","data = list(""wattisham"" = add_prcp_adj_occur(readRDS(""data/wattisham_prcp_storm_atm_data.rds""), prcp_thresh = 1),"
+"0","            ""plymouth"" = add_prcp_adj_occur(readRDS(""data/plymouth_prcp_storm_atm_data.rds""), prcp_thresh = 1),"
+"0","            ""tiree"" = add_prcp_adj_occur(readRDS(""data/tiree_prcp_storm_atm_data.rds""), prcp_thresh = 1))"
+"0","d <- bind_rows(data, .id = ""station"")"

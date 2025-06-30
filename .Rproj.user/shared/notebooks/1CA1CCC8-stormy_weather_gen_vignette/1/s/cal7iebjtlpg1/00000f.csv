@@ -1,0 +1,8 @@
+"0","get_crps <- function(y, yrep){"
+"0","  ndraw <- nrow(yrep)"
+"0","  x1 <- t(yrep)[,1:(ndraw/2)]"
+"0","  x2 <- t(yrep)[,(1+ndraw/2):ndraw]"
+"0","  crps <- (rowMeans(abs(x1 - y)) - .5 * rowMeans(abs(x1 - x2)))"
+"0","  "
+"0","  crps"
+"0","}"

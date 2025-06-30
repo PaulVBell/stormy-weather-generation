@@ -1,0 +1,2 @@
+"0","d0mm <- data[[""wattisham""]] %>%"
+"0","  mutate(occur = as.numeric(prcp_amt > 0))"

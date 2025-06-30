@@ -1,0 +1,1 @@
+"0","draw_df <- bind_rows(lapply(draw_list, bind_rows, .id = ""types""), .id = ""station"")"

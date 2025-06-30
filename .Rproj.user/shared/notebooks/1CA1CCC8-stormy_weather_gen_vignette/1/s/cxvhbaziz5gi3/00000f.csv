@@ -1,0 +1,2 @@
+"0","# # Uncomment and run to save the 0mm threshold weather generator fit as a .RData file."
+"0","# save(occ_fit_0mm, amt_fit_0mm, file = ""fit_wattisham_0mm.RData"")"

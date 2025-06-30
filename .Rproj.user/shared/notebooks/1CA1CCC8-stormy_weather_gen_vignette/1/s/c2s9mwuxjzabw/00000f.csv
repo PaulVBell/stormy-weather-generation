@@ -1,0 +1,15 @@
+"0",""
+"0","simple_occ_fit <- brm("
+"0","  formula = occur ~ 1,"
+"0","  family = bernoulli(link = ""logit""),"
+"0","  data = data[[""wattisham""]],"
+"0","  iter = 2000,"
+"0","  warmup = 1000,"
+"0","  chains = 2,"
+"0","  cores = 2)"
+"2","G2;H2;Warningh: Rows containing NAs were excluded from the model.g
+"
+"2","G3;Compiling Stan program...
+g"
+"2","G3;Start sampling
+g"

@@ -1,0 +1,2 @@
+"0","# Load the 0mm threshold weather generator fit into the environment."
+"0","load(""fits/fit_wattisham_0mm.RData"")"

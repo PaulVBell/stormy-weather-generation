@@ -1,0 +1,6 @@
+"0","ggplot(data = NULL) +"
+"0","  xlim(0, 20) +"
+"0","  geom_function(fun = pnorm, args = list(mean = 1, sd = 7.5)) +"
+"0","  xlab(""Precipitation amount / 1mm 6hr^-1"") +"
+"0","  ylab(""w"") + "
+"0","  theme(text = element_text(size = 20))"

@@ -1,0 +1,7 @@
+"0","# Load the weather generator fit into the environment."
+"0","load(""fits/storm_wg_fit.RData"")"
+"0","gc()"
+"1","            used   (Mb) gc trigger   (Mb)  max used   (Mb)
+Ncells   8263749  441.4   14555784  777.4   8323002  444.5
+Vcells 328906401 2509.4  414891861 3165.4 329791433 2516.2
+"

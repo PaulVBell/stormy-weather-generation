@@ -1,0 +1,7 @@
+"0","draw_df %>%"
+"0","  ggplot() +"
+"0","  geom_density(aes(x = value, group = draw, colour = ""yrep"")) +"
+"0","  geom_density(aes(x = obs, group = draw, colour = ""y"")) +"
+"0","  scale_x_continuous(transform = ""sqrt"", limits = c(0,50)) +"
+"0","  scale_colour_manual(name = """", values = c(`yrep` = ""lightblue"", `y` = ""black"")) +"
+"0","  facet_grid(types~station)"

@@ -1,0 +1,909 @@
+---
+title: "Storm types weather generator"
+output: html_document
+date: "2025-06-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(brms)
+library(tidyverse)
+library(reshape2)
+library(future)
+```
+
+# Data
+
+The following data comes from 3 sources.
+
+-   Atmospheric data is from the European Centre for Medium-Range Weather Forecasts (ECMWF) Reanalysis version 5 (ERA5). (1)
+-   MIDAS Open UK hourly rainfall data, v202308 (2)
+-   European Storm Types Dataset. (3)
+
+1)  Hersbach, H., Bell, B., Berrisford, P., Biavati, G., Horányi, A., Muñoz Sabater, J., Nicolas, J., Peubey, C., Radu, R., Rozum, I., Schepers, D., Simmons, A., Soci, C., Dee, D., Thépaut, J-N. (2023): ERA5 hourly data on pressure levels from 1940 to present. Copernicus Climate Change Service (C3S) Climate Data Store (CDS), DOI: <https://doi.org/10.24381/cds.bd0915c6> (Accessed on 16-12-2024)
+2)  Met Office (2023): MIDAS Open: UK hourly rainfall data, v202308. NERC EDS Centre for Environmental Data Analysis, 03 October 2023. doi: <https://doi.org/10.5285/c21639861fb54623a749e502ebac74ed>.
+3)  Catto, J., Dowdy, A. European Storm Type Dataset (2023) DOI: <https://doi.org/10.24378/exe.4764>
+
+## Get data
+
+Define a function `add_prcp_adj_occur()` that generates adjusted precipitation amounts, `prcp_amt_adj`, which is the precipitation amount above the threshold of 1 mm / 6hr, and which adds an indicator variable, `occur`, for precipitation occurrence.
+
+```{r add_prcp_adj_occur()}
+add_prcp_adj_occur <- function(df, prcp_thresh){
+  df %>%
+    mutate(prcp_amt_adj = (abs(prcp_amt - prcp_thresh) + (prcp_amt - prcp_thresh)) / 2) %>%
+    mutate(occur = as.numeric(prcp_amt_adj > 0))
+  }
+```
+
+Get the data. We have three different weather stations in Plymouth, Wattisham and Tiree.
+
+```{r get_data}
+data = list("wattisham" = add_prcp_adj_occur(readRDS("data/wattisham_prcp_storm_atm_data.rds"), prcp_thresh = 1),
+            "plymouth" = add_prcp_adj_occur(readRDS("data/plymouth_prcp_storm_atm_data.rds"), prcp_thresh = 1),
+            "tiree" = add_prcp_adj_occur(readRDS("data/tiree_prcp_storm_atm_data.rds"), prcp_thresh = 1))
+d <- bind_rows(data, .id = "station")
+```
+
+# Data visualisation
+
+Lets take a look at the data.
+
+The atmospheric variables we consider for the weather generator are relative and specific humidity and vertical velocity.
+
+## Precipitation amounts
+
+Below shows plots of precipitation \> 1mm / 6hr versus q850 (specific humidity at 850hPa in kg / kg) and w500 (vertical velocity at 500hPa in Pa / s). These are the covariates for the amounts model.
+
+```{r visualise_precip_amounts}
+d %>%
+  filter(occur == 1) %>%
+  ggplot() +
+  geom_hex(aes(y = prcp_amt_adj + 1, x = w500)) +
+  scale_fill_continuous(transform = "log10") +
+  facet_wrap(~station) +
+  labs(y = 'Precip amount > 1 / mm 6hr^-1', x = "w500 / Pa^s-1")
+
+d %>%
+  filter(occur == 1) %>%
+  ggplot() +
+  geom_hex(aes(y = prcp_amt_adj + 1, x = q850)) +
+  scale_fill_continuous(transform = "log10") +
+  facet_wrap(~station) +
+  labs(y = 'Precip amount > 1 / mm 6hr^-1', x = "q850 / kgkg^-1")
+```
+
+## Precipitation occurrence
+
+Defined as being precipitation \> 1 mm / 6hr. Plots showing the distribution of w500 and r850 (relative humidity at 850hPa in %) for dry (=\< 1mm / 6hr) and precipitation occurrence (\> 1mm / 6hr). These are the covariates for the occurrence model
+
+```{r visualise_prcip_occurrence}
+d %>%
+  drop_na() %>%
+  ggplot(aes(y = after_stat(density), x = w500)) +
+  geom_density(aes(linetype = factor(occur,levels = c(0,1), labels = c('Dry', 'Precip')))) +
+  facet_wrap(~station) +
+  labs(linetype = "Occurrence", x = "w500 / Pa^s-1")
+
+d %>%
+  drop_na() %>%
+  ggplot(aes(y = after_stat(density), x = r850)) +
+  geom_density(aes(linetype = factor(occur,levels = c(0,1), labels = c('Dry', 'Precip')))) +
+  facet_wrap(~station) +
+  labs(linetype = "Occurrence", x = "r850 / %")
+```
+
+```{r rm_d}
+rm(d)
+gc()
+```
+
+# brms fitting
+
+brms is a package that does Hamiltonian Markov chain Monte Carlo (MCMC) to fit Bayesian regression models.
+
+Start with a very simple model. The occurrence model is logistic regression, so the family parameter in the `brm` function is `bernoulli(link = "logit")`. Not giving any priors input gives the default value of uniform priors.
+
+With no covariates in the formula this results in just an intercept term.
+
+```{r simple_wg_occ}
+
+simple_occ_fit <- brm(
+  formula = occur ~ 1,
+  family = bernoulli(link = "logit"),
+  data = data[["wattisham"]],
+  iter = 2000,
+  warmup = 1000,
+  chains = 2,
+  cores = 2)
+
+```
+
+Similarly for the amounts model using `Gamma(link = "log")` as input to the family parameter and filtering out cases of non-occurrence.
+
+```{r simple_wg_amts}
+
+simple_amt_fit <- brm(
+  formula = prcp_amt_adj ~ 1,
+  family = Gamma(link = "log"),
+  data = filter(data[["wattisham"]], occur == 1),
+  iter = 2000,
+  warmup = 1000,
+  chains = 2,
+  cores = 2)
+
+```
+
+Check the chains of these models have mixed using the default brms plot function.
+
+```{r plot_simple_wg}
+plot(simple_occ_fit)
+plot(simple_amt_fit)
+```
+
+## Priors and brms formulas
+
+We want to include atmospheric and seasonal covariates. We also want informative priors for our parameters.
+
+The choice of prior distributions is discussed separately in the supplementary material and are just defined below.
+
+### Without storm types
+
+Set up the brms formulas and priors for the Atmospheric model without storm types.
+
+```{r priors_without_storm types}
+occurrence_priors <- c(set_prior('normal(0,2)',class ='Intercept'),
+                       set_prior('normal(0,1)',class = 'b', coef = c("sin_doy","cos_doy")),
+                       set_prior('normal(0,2)',class = 'b', coef = "w500"),
+                       set_prior('normal(0,0.02)',class = 'b', coef = "r850")
+)
+
+amounts_priors <- c(set_prior('normal(0,1)',class = 'Intercept'),
+                      set_prior('normal(0,0.2)',class = 'b', coef = c("sin_doy","cos_doy")),
+                      set_prior('normal(0,1)',class = 'b', coef = "w500"),
+                      set_prior('normal(0,100)',class = 'b', coef = "q850"),
+                      set_prior('gamma(2,1)', class = 'shape')
+)
+
+occurrence_formula = occur ~ sin_doy + cos_doy + w500 + r850
+amounts_formula = prcp_amt_adj ~ sin_doy + cos_doy + w500 + q850
+```
+
+### With storm types
+
+Set up the brms formulas and priors for the Atmospheric model with storm types. checks.
+
+```{r priors_with_storm types}
+occurrence_priors_with_st <- c(set_prior('normal(0,10)',class = 'b', coef = str_c("storm_type",0:7)),
+                       set_prior('normal(0,1)',class = 'b', coef = c(str_c("storm_type",0:7,":sin_doy"),str_c("storm_type",0:7,":cos_doy"))),
+                       set_prior('normal(0,2)',class = 'b', coef = str_c("storm_type",0:7,":w500")),
+                       set_prior('normal(0,0.02)',class = 'b', coef = str_c("storm_type",0:7,":r850"))
+                       )
+
+# the coefficients have the string "storm_typei:cov" where i is the number of the type and cov is the the covariate, e.g. storm_type1:cos_doy
+
+amounts_priors_with_st <- c(set_prior('normal(0,1)',class = 'b', coef = str_c("storm_type",0:7)),
+                      set_prior('normal(0,0.2)',class = 'b', coef = c(str_c("storm_type",0:7,":sin_doy"),str_c("storm_type",0:7,":cos_doy"))),
+                      set_prior('normal(0,1)',class = 'b', coef = str_c("storm_type",0:7,":w500")),
+                      set_prior('normal(0,100)',class = 'b', coef = str_c("storm_type",0:7,":q850")),
+                      set_prior('gamma(2,1)', class = 'shape')
+                      )
+
+# formula results in a separate regression parameter for each storm type
+occurrence_formula_with_st = occur ~ -1 + (sin_doy + cos_doy + w500 + r850)*storm_type - sin_doy - cos_doy - w500 - r850
+amounts_formula_with_st = prcp_amt_adj ~ -1 + (sin_doy + cos_doy + w500 + q850)*storm_type - sin_doy - cos_doy - w500 - q850
+```
+
+## Define occurrence brms functions
+
+Define a function `occ_fit_kfold_brms()` that fits the occurrence model, then performs k-fold cross validation and outputs draws from the posterior predictive distribution for each fold and every observation.
+
+```{r occ_fit_kfold_brms}
+occ_fit_kfold_brms <- function(data, formula, priors, cores, iter = 2000, warmup = 1000, chains = 2, kfold_chains = 1){
+  
+  # Wrapper for fitting the occurrence brm model, performing k-fold cross validation and posterior predictions from the k-folds.
+  # Arguments: usual brm arguments and kfold_chains which determines how many chains to use for the k-fold cross validation.
+  # Value: a list of fit, the brm fit, y, the observations, and yrep, the k-fold cross validated posterior predictive samples.
+  
+  fit <- brm(
+    formula = formula,
+    family = bernoulli(link = "logit"),
+    data = data,
+    prior = priors,
+    iter = iter,
+    warmup = warmup,
+    chains = chains,
+    cores = cores
+  )
+  gc(verbose = FALSE)
+  
+  folds = drop_na(data)$fold
+  if(cores > 1){
+    plan(multisession, workers = cores)
+    fit_k_fold <- kfold(fit, chains = kfold_chains, folds = folds, save_fits = TRUE)
+    plan(sequential)
+  }
+  if(cores == 1){
+    fit_k_fold <- kfold(fit, chains = kfold_chains, folds = folds, save_fits = TRUE)
+  }
+  gc(verbose = FALSE)
+  
+  fit_p <- kfold_predict(fit_k_fold)
+  gc(verbose = FALSE)
+  
+  list(fit = fit, y = fit_p$y, yrep = fit_p$yrep)
+}
+```
+
+## Define amounts brms functions
+
+Define a function `amt_fit_kfold_brms()` that fits the amounts model, then performs k-fold cross validation and outputs draws from the posterior predictive distribution for each fold and every observation.
+
+Note that another function `kfold_predict_newdata()` needs to be defined. This is because `brms::kfold` has no option for inputting new data to make predictions for. This is unsurprising as in a typical use case k-fold cross validation shouldn't be used to predict new data, as the data is already not used to calibrate the model.
+
+However, this is a rare case when this is relevant. Here we have data that is automatically left out and not used to calibrate the model (cases where precipitation didn't occur), and we want to include this data in our validation dataset so we can see the consequence of occurrence false positives on proper scoring rules and calibration. However, we don't want to use the model calibrated on all the data for these data points as that would give them an unfair access to more data, hence a function that includes new data but only predicts based on data not in that fold.
+
+```{r amt_fit_kfold_brms}
+kfold_predict_newdata <- function(x, newdata){
+  
+  # Generate posterior predictions from brms kfold object with newdata assigned to each fold.
+  # Arguments: x a brms kfold object, newdata a data.frame of new data with a column fold.
+  # Value: returns list of y, the observations, and yrep, the k-fold cross validated posterior predictive samples.
+  
+  ndraw <- ndraws(x$fits[[1, "fit"]])
+  yrep <- matrix(NA, nrow = ndraw, ncol = nrow(newdata))
+  
+  for(k in 1:nrow(x$fits)){
+    fit_k <- x$fits[[k, "fit"]]
+    k_index <- which(newdata$fold == k)
+    yrep[, k_index] <- posterior_predict(fit_k, newdata = filter(newdata, fold == k))
+  }
+  y = newdata$prcp_amt_adj
+  list(y = y, yrep = yrep)
+}
+
+
+amt_fit_kfold_brms <- function(data, formula, priors, cores, iter = 2000, warmup = 1000, chains = 2, kfold_chains = 1){
+  
+  # Wrapper for fitting the occurrence brm model, performing k-fold cross validation and posterior predictions from the k-folds.
+  # Arguments: usual brm arguments and kfold_chains which determines how many chains to use for the k-fold cross validation.
+  # Value: a list of fit, the brm fit, y, the observations, and yrep, the k-fold cross validated posterior predictive samples.
+
+  
+  fit <- brm(
+    formula = formula,
+    family = Gamma(link = "log"),
+    data = filter(data, occur == 1),
+    prior = priors,
+    iter = iter,
+    warmup = warmup,
+    chains = chains,
+    cores = cores
+  )
+  gc(verbose = FALSE)
+  
+  folds = filter(data, occur == 1)$fold
+  if(cores > 1){
+    plan(multisession, workers = cores)
+    fit_k_fold <- kfold(fit, chains = kfold_chains, folds = folds, save_fits = TRUE)
+    plan(sequential)
+  }
+  if(cores == 1){
+    fit_k_fold <- kfold(fit, chains = kfold_chains, folds = folds, save_fits = TRUE)
+  }
+  gc(verbose = FALSE)
+  
+  fit_p <- kfold_predict_newdata(fit_k_fold, drop_na(data))
+  gc(verbose = FALSE)
+  
+  list(fit = fit, y = fit_p$y, yrep = fit_p$yrep)
+}
+```
+
+```{r stations_types}
+stations <- c("wattisham", "tiree", "plymouth")
+types <- c("yes", "no")
+```
+
+## Loop over the three stations and with/without storm types.
+
+We need to loop over the three stations and the two models, with and without storm_types
+
+The following code chunks take a few hours to run on 4 cores as k-fold cross validation fits the same brms model k times. To avoid refitting the model load the "storm_wg_fit.RData" file which contains the fitted model.
+
+```{r load_fit}
+# Load the weather generator fit into the environment.
+load("fits/storm_wg_fit.RData")
+gc()
+```
+
+The 10 folds are already included as a column in the data dataframe for reproducibility but to increase computation speed use fewer numbers of folds. Alternatively reduce the number of stations.
+
+types = "yes" (= "no") indicates with (without) storm types.
+
+Loop over stations and models for occurrence:
+
+```{r occurrence_fit}
+# # Uncomment to rerun fitting the occurrence model.
+# 
+# stations <- c("wattisham", "tiree", "plymouth")
+# occ_fit_list <- list()
+# for(i in 1:length(stations)){
+#   occ_fit_list[[stations[i]]] <- list()
+#   
+#   occ_fit_list[[stations[i]]][["yes"]] <- occ_fit_kfold_brms(
+#     data = data[[stations[i]]],
+#     formula = occurrence_formula_with_st,
+#     priors = occurrence_priors_with_st,
+#     iter = 2000,
+#     cores = 4
+#     )
+#   
+#   occ_fit_list[[stations[i]]][["no"]] <- occ_fit_kfold_brms(
+#     data = data[[stations[i]]],
+#     formula = occurrence_formula,
+#     priors = occurrence_priors,
+#     iter = 2000,
+#     cores = 4
+#     )
+# }
+```
+
+And amounts:
+
+```{r amounts_fit}
+# # Uncomment to rerun fitting the amounts model
+# 
+# stations <- c("wattisham", "tiree", "plymouth")
+# amt_fit_list <- list()
+# for(i in 1:length(stations)){
+#   amt_fit_list[[stations[i]]] <- list()
+#   
+#   amt_fit_list[[stations[i]]][["yes"]] <- amt_fit_kfold_brms(
+#     data = data[[stations[i]]],
+#     formula = amounts_formula_with_st,
+#     priors = amounts_priors_with_st,
+#     iter = 2000,
+#     cores = 4
+#     )
+#   
+#   amt_fit_list[[stations[i]]][["no"]] <- amt_fit_kfold_brms(
+#     data = data[[stations[i]]],
+#     formula = amounts_formula,
+#     priors = amounts_priors,
+#     iter = 2000,
+#     cores = 4
+#     )
+# }
+```
+
+```{r save_fit}
+# # Uncomment and run to save the weather generator fit as a .RData file.
+# save(occ_fit_list, amt_fit_list, file = "storm_wg_fit.RData")
+```
+
+`occ_fit_list` and `amt_fit_list` are nested lists of stations and if storm types are (`yes`) or aren't (`no`) used.
+
+Then the final lists are the ones generated by the `occ_fit_kfold_brms` and `amt_fit_kfold_brms` functions, which contain the brms fit, the data used, `y`, and the draws from the k-fold posterior predictive distribution, `yrep`.
+
+```{r look_at_list}
+names(occ_fit_list$wattisham$yes)
+```
+
+# Scoring rules
+
+## CRPS
+
+The Continuous Ranked Probability Score (CRPS) can be found by using the expectation of the posterior predictive distribution:
+
+$\text{CRPS} = E(|x_1 - y|) - \frac{1}{2}E(|x_1 - x_2|)$
+
+Where $x_1$ and $x_2$ are independent samples from the WG distribution, and $y$ is the observed value.
+
+This can be estimated by using the sample mean of the above quantities. Note this is an estimate resulting in some negative CRPS values.
+
+Define a simple CRPS function that uses half of the samples as x1 and the other half as x2.
+
+```{r get_crps}
+get_crps <- function(y, yrep){
+  ndraw <- nrow(yrep)
+  x1 <- t(yrep)[,1:(ndraw/2)]
+  x2 <- t(yrep)[,(1+ndraw/2):ndraw]
+  crps <- (rowMeans(abs(x1 - y)) - .5 * rowMeans(abs(x1 - x2)))
+  
+  crps
+}
+```
+
+Loop over the CRPS
+
+```{r crps_loop}
+crps_list <- list()
+for(i in 1:length(stations)){
+  crps_list[[stations[i]]] <- list()
+  for(j in 1:2){
+      amt_fit <- amt_fit_list[[stations[i]]][[types[j]]]
+      occ_fit <- occ_fit_list[[stations[i]]][[types[j]]]
+      
+      yrep <- (amt_fit$yrep + 1)*occ_fit$yrep
+      y <- amt_fit$y + occ_fit$y
+      
+      crps_list[[stations[i]]][[types[j]]] <- get_crps(y, yrep)
+  }
+}
+```
+
+```{r crps_df}
+crps_df <- bind_rows(lapply(crps_list, data.frame, row.names = NULL), .id = "station") 
+```
+
+Plots of the distribution of CRPS values can be seen below:
+
+```{r plot_crps}
+crps_df %>%
+  pivot_longer(c("yes", "no"), names_to = "types", values_to = "crps") %>%
+  ggplot() +
+  geom_density(aes(x = crps)) + 
+  facet_grid(station~types, scales = "free_y") + 
+  lims(x = c(-0.5, 2.5))
+
+```
+
+The values of the CRPS are (a smaller score is better):
+
+```{r crps_values}
+crps_df %>%
+  group_by(station) %>%
+  summarise(`average amounts crps with storm types` = mean(yes), `average amounts crps without storm types` = mean(no))
+  
+```
+
+## Amounts CRPS
+
+The Amounts CRPS is the CRPS for just the amounts model, validated against observations above 1 mm / 6hr.
+
+Similar to above:
+
+```{r amt_crps_loop}
+amt_crps_list <- list()
+for(i in 1:length(stations)){
+  amt_crps_list[[stations[i]]] <- list()
+  for(j in 1:2){
+      amt_fit <- amt_fit_list[[stations[i]]][[types[j]]]
+      
+      yrep <- (amt_fit$yrep[,which(amt_fit$y > 0)] + 1)
+      y <- amt_fit$y[which(amt_fit$y > 0)] + 1
+      
+      amt_crps_list[[stations[i]]][[types[j]]] <- get_crps(y, yrep)
+  }
+}
+```
+
+```{r amt_crps_df}
+amt_crps_df <- bind_rows(lapply(amt_crps_list, data.frame, row.names = NULL), .id = "station") 
+```
+
+```{r plot_amt_crps}
+amt_crps_df %>%
+  pivot_longer(c("yes", "no"), names_to = "types", values_to = "crps") %>%
+  ggplot() +
+  geom_density(aes(x = crps)) + 
+  facet_grid(station~types, scales = "free_y") + 
+  xlab("amt_crps") +
+  lims(x = c(-0.5, 2.5))
+
+```
+
+The Amounts CRPS values are below. Note Wattisham is not inproved much at all.
+
+```{r amt_crps_values}
+amt_crps_df %>%
+  group_by(station) %>%
+  summarise(`average amounts crps with storm types` = mean(yes), `average amounts crps without storm types` = mean(no))
+  
+```
+
+## BS
+
+The Brier Score is defined as:
+
+$\text{BS} = \frac{1}{T}\sum\limits_{t = 1}^{T}(o_t - p_t)^2$
+
+```{r bs_loop}
+bs_list <- list()
+for(i in 1:length(stations)){
+  bs_list[[stations[i]]] <- list()
+  for(j in 1:2){
+      amt_fit <- amt_fit_list[[stations[i]]][[types[j]]]
+      occ_fit <- occ_fit_list[[stations[i]]][[types[j]]]
+      
+      p = colMeans(occ_fit$yrep)
+      
+      bs_list[[stations[i]]][[types[j]]] <- mean((p - occ_fit$y)^2)
+  }
+}
+```
+
+```{r bs_df}
+bs_df <- bind_rows(lapply(bs_list, data.frame, row.names = NULL), .id = "station") 
+```
+
+All the BS values are improved
+
+```{r bs_values}
+bs_df
+```
+
+## twCRPS
+
+The threshold weighted CRPS (twCRPS) is a proper threshold weighted scoring rule.
+
+A similar form to the CRPS is available:
+
+$\text{twCRPS} = E(|v(x_1) - v(y)|) - \frac{1}{2}E(|v(x_1) - v(x_2)|)$
+
+where:
+
+$v(X) - v(X') = \int_{X'}^{X} w(\zeta)d\zeta.$
+
+Here we use a normal CDF as the weight function (with mean 1 and standard deviation 7.5):
+
+```{r weight_function}
+ggplot(data = NULL) +
+  xlim(0, 20) +
+  geom_function(fun = pnorm, args = list(mean = 1, sd = 7.5)) +
+  xlab("Precipitation amount / 1mm 6hr^-1") +
+  ylab("w") + 
+  theme(text = element_text(size = 20))
+```
+
+Define v for this weight function:
+
+$v(X) = (X - \mu)\Phi_{\mu, \sigma}(X) + \sigma^2 \varphi_{\mu, \sigma}(X)$
+
+where $\varphi_{\mu, \sigma}(X)$ is the normal density function.
+
+```{r v}
+v <- function(z, mean, sd) {
+  (z - mean)*pnorm(z, mean = mean, sd = sd) + (sd^2)*dnorm(z,mean = mean, sd = sd)
+}
+```
+
+Then the twCRPS can be found similarly to the CRPS:
+
+```{r get_twcrps}
+get_twcrps <- function(y, yrep, mean, sd){
+  ndraw <- nrow(yrep)
+  v_x1 <- v(t(yrep)[,1:(ndraw/2)], mean, sd)
+  v_x2 <- v(t(yrep)[,(1+ndraw/2):ndraw], mean, sd)
+  twcrps <- (rowMeans(abs(v_x1 - v(y, mean, sd))) - .5 * rowMeans(abs(v_x1 - v_x2)))
+  
+  twcrps
+}
+```
+
+```{r twcrps_loop}
+twcrps_list <- list()
+for(i in 1:length(stations)){
+  twcrps_list[[stations[i]]] <- list()
+  for(j in 1:2){
+      amt_fit <- amt_fit_list[[stations[i]]][[types[j]]]
+      occ_fit <- occ_fit_list[[stations[i]]][[types[j]]]
+      
+      yrep <- (amt_fit$yrep + 1)*occ_fit$yrep
+      y <- amt_fit$y + occ_fit$y
+      
+      twcrps_list[[stations[i]]][[types[j]]] <- get_twcrps(y, yrep, mean = 1, sd = 7.5)
+  }
+}
+```
+
+```{r twcrps_df}
+twcrps_df <- bind_rows(lapply(twcrps_list, data.frame, row.names = NULL), .id = "station") 
+```
+
+```{r plot_twcrps}
+twcrps_df %>%
+  pivot_longer(c("yes", "no"), names_to = "types", values_to = "crps") %>%
+  ggplot() +
+  geom_density(aes(x = crps)) + 
+  facet_grid(station~types, scales = "free_y") + 
+  xlab("twcrps") +
+  lims(x = c(-0.5, 2.5))
+
+```
+
+The twCRPS values are below:
+
+```{r twcrps_vaues}
+twcrps_df %>%
+  group_by(station) %>%
+  summarise(`average twcrps with storm types` = mean(yes), `average twcrps without storm types` = mean(no))
+  
+```
+
+```{r}
+gc()
+```
+
+# PIT Histogram
+
+The Probability Integral Transform (PIT) histogram is a graphical tool for assessing calibration. The PIT is the value of the cumulative distribution function (CDF) at an observation, $\text{PIT}_t = F(r_t)$.
+
+If the model is well calibrated the PIT will be uniformly distributed between 0 and 1, and examining it's histogram for deviations from a uniform density can highlight any miscalibration.
+
+A simple sample approximation for PIT values is the rank of the posterior predictive draw closest to the observation when these ranks are ordered smallest to largest.
+
+The function `get_PIT()` sorts `yrep - y` and finds the minimum of the absolute value. In the event of ties a random draw is sampled from the ties. Ties are especially relevant for the overall PIT, as there are many zeros in the posterior predictions and observations.
+
+```{r get_PIT}
+resample <- function(x, ...) x[sample.int(length(x), ...)]
+
+get_PIT <- function(x){
+  sorted <- abs(sort(x))
+  resample(which(sorted == min(sorted)),size = 1)/length(x)
+}
+```
+
+Looping through the stations and models with and without storm types, for the overall model:
+
+```{r loop_PIT}
+PIT_list <- list()
+for(i in 1:length(stations)){
+  for(j in 1:2){
+      amt_fit <- amt_fit_list[[stations[i]]][[types[j]]]
+      occ_fit <- occ_fit_list[[stations[i]]][[types[j]]]
+      
+      yrep <- (amt_fit$yrep + 1)*occ_fit$yrep
+      y <- amt_fit$y + occ_fit$y
+      
+      PIT_list[[stations[i]]][[types[j]]] <- apply(t(yrep) - y, MARGIN = 1, FUN = get_PIT)
+  }
+}
+```
+
+```{r df_PIT}
+df_pit <- bind_rows(lapply(PIT_list, data.frame, row.names = NULL), .id = "station") 
+```
+
+Then overall PIT histogram is below. This is uniformly distributed between 0 and 1 because the occurrence model is well calibrated and there are more zeros in the observations than none zeros.
+
+```{r plot_PIT}
+df_pit %>%
+  pivot_longer(c("yes", "no"), names_to = "types", values_to = "PIT") %>%
+  ggplot() +
+  geom_density(aes(x = PIT), bounds = c(0,1)) +
+  geom_hline(aes(yintercept = 1), colour = "red", linetype = "dashed") +
+  facet_grid(types~station)
+```
+
+Looping through the stations and models with and without storm types, for just the amounts model
+
+```{r loop_amt_PIT}
+amt_PIT_list <- list()
+for(i in 1:length(stations)){
+  for(j in 1:2){
+      amt_fit <- amt_fit_list[[stations[i]]][[types[j]]]
+      occ_fit <- occ_fit_list[[stations[i]]][[types[j]]]
+      
+      yrep <- amt_fit$yrep[,which(amt_fit$y > 0)]
+      y <- amt_fit$y[which(amt_fit$y > 0)]
+      
+      amt_PIT_list[[stations[i]]][[types[j]]] <- apply(t(yrep) - y, MARGIN = 1, FUN = get_PIT)
+  }
+}
+```
+
+```{r df_amt_PIT}
+df_amt_pit <- bind_rows(lapply(amt_PIT_list, data.frame, row.names = NULL), .id = "station")
+```
+
+Here we see miscalibration in the amounts model for all stations, regardless of storm types.
+
+```{r plot_amt_PIT}
+df_amt_pit %>%
+  pivot_longer(c("yes", "no"), names_to = "types", values_to = "PIT") %>%
+  ggplot() +
+  geom_density(aes(x = PIT), bounds = c(0,1)) +
+  geom_hline(aes(yintercept = 1), colour = "red", linetype = "dashed") +
+  facet_grid(types~station)
+```
+
+```{r}
+gc()
+```
+
+# Posterior Predictive Checks
+
+A straightforward way to check calibration of the average WG response with respect to the observed time series is by comparing draws from the posterior predictive distribution (PPD) to the observation empirical probability density.
+
+```{r get_draws}
+ndraw = 10
+draw_list <- list()
+for(i in 1:length(stations)){
+  for(j in 1:2){
+      amt_fit <- amt_fit_list[[stations[i]]][[types[j]]]
+      occ_fit <- occ_fit_list[[stations[i]]][[types[j]]]
+      
+      yrep <- (amt_fit$yrep + 1)*occ_fit$yrep
+      y <- amt_fit$y + occ_fit$y
+      
+      draw_list[[stations[i]]][[types[j]]] <- melt(yrep[1:ndraw,]) %>%
+        rename(draw = Var1, obs = Var2) %>%
+        mutate(obs = y[obs])
+  }
+}
+```
+
+```{r draw_df}
+draw_df <- bind_rows(lapply(draw_list, bind_rows, .id = "types"), .id = "station")
+```
+
+Plotting for Wattisham without storm types the draws from the PPD (yrep) versus observations (y):
+
+```{r}
+draw_df %>%
+  filter(station == "wattisham") %>%
+  filter(types == "no") %>%
+  ggplot() +
+  geom_density(aes(x = value, group = draw, colour = "yrep")) +
+  geom_density(aes(x = obs, group = draw, colour = "y")) +
+  scale_x_continuous(transform = "sqrt", limits = c(0,50)) +
+  scale_colour_manual(name = "", values = c(`yrep` = "lightblue", `y` = "black"))
+```
+
+Similarly for all stations with and without storm types:
+
+```{r}
+draw_df %>%
+  ggplot() +
+  geom_density(aes(x = value, group = draw, colour = "yrep")) +
+  geom_density(aes(x = obs, group = draw, colour = "y")) +
+  scale_x_continuous(transform = "sqrt", limits = c(0,50)) +
+  scale_colour_manual(name = "", values = c(`yrep` = "lightblue", `y` = "black")) +
+  facet_grid(types~station)
+```
+
+Similarly to the PIT historgram the main miscalibration is present in the amounts model.
+
+Note the below figure shows the overall model, but only the amounts greater than 1 on a log10 scale. This means that the effect of any false positive occurrence values would be present.
+
+```{r}
+draw_df %>%
+  ggplot() +
+  geom_density(aes(x = value, group = draw, colour = "yrep")) +
+  geom_density(aes(x = obs, group = draw, colour = "y")) +
+  scale_x_continuous(transform = "log10", limits = c(1,50)) +
+  scale_colour_manual(name = "", values = c(`yrep` = "lightblue", `y` = "black")) +
+  facet_grid(types~station)
+```
+
+# Diebold-Mariano test statistic
+
+The Diebold-Mariano test statistic allows us to determine if average score differences are statistically significant. See Diebold and Mariano (1995) (<https://doi.org/10.1080/07350015.1995.10524599>).
+
+Note that the precipitation data contains periods with missing values. The calculation of the autocorrelation using the `acf()` function passes (when `na.action = na.pass`) these NA values and so missing data periods of the correct length need to be included in the time series of scores for the autocorrelation to be reasonably calculated. This is done using the `get_drop_na_index()` function which is inputted a time series with missing values and creates a time series of indices split up by missing values of the correct length.
+
+```{r dm_test_functions}
+
+n_eff <- function(S1,S2){
+  ac <- as.numeric(acf(S1 - S2, plot = FALSE, na.action=na.pass)$acf)
+  ac[abs(ac)<0.005] <- 0
+  ac <- ac[1:which.min(abs(ac))]
+  sum(!is.na(S1)) /(1 + 2 * sum(ac[2:length(ac)]))
+}
+
+dm_test <- function(S1,S2){
+  N <- n_eff(S1,S2)
+  dm_var <- (1 / N) * sum((S1 - S2)^2, na.rm=TRUE)
+  t <- (N^.5) * (mean(S1, na.rm=TRUE) - mean(S2, na.rm=TRUE)) / (dm_var^.5)
+  t
+}
+
+dm_test_no_neff <- function(S1,S2){
+  N <- sum(!is.na(S1))
+  dm_var <- (1 / N) * sum((S1 - S2)^2, na.rm=TRUE)
+  t <- (N^.5) * (mean(S1, na.rm=TRUE) - mean(S2, na.rm=TRUE)) / (dm_var^.5)
+  t
+}
+```
+
+```{r get_drop_na_index}
+get_drop_na_index <- function(x) cumsum(!is.na(x))+(x*is.na(x)) # This function is used to reverse dplyr::drop_na(), by returning a time series of indexes of non NA data split by vectors of appropriate length NAs.
+```
+
+```{r eg_get_na_index}
+# An example of how get_drop_na_index() works.
+print(get_drop_na_index(c(6,4,5,NA,NA,2,NA,NA,NA,3,4)))
+c(6,4,5,2,3,4)[get_drop_na_index(c(6,4,5,NA,NA,2,NA,NA,NA,3,4))]
+```
+
+Below are the DM test statistics for the score difference between the CRPS with and without storm types.
+
+```{r get_dm_crps}
+for(i in 1:length(stations)){
+  S1 <- crps_list[[stations[i]]][["no"]][get_drop_na_index(data[[stations[i]]]$prcp_amt)]
+  names(S1) <- 1:length(S1)
+  
+  S2 <- crps_list[[stations[i]]][["yes"]][get_drop_na_index(data[[stations[i]]]$prcp_amt)]
+  names(S2) <- 1:length(S2)
+  
+  print(paste(stations[i], "CRPS DM test statistic:", round(dm_test(S1,S2),2)))
+}
+```
+
+The same for amounts. Note that using N_eff here isn't needed as there are so many "missing" values, i.e. times when precipitation doesn't occur Also note the low DM score for Wattisham.
+
+```{r get_dm_amt_crps}
+for(i in 1:length(stations)){
+  S1 <- amt_crps_list[[stations[i]]][["no"]]
+
+  S2 <- amt_crps_list[[stations[i]]][["yes"]]
+
+  print(paste(stations[i], "Amounts CRPS DM test statistic:", round(dm_test_no_neff(S1,S2),2)))
+}
+```
+
+# Comparison between 1 mm / 6hr and 0 mm / 6hr threshold, calibration
+
+The choice of 1mm / 6hr as the occurrence threshold was made because of calibration of the amounts model. A Gamma distribution was found to be poorly calibrated to precipitation amounts, when precipitation below 1 mm was considered.
+
+Below show an example of this miscalibration for the Wattisham station with storm types.
+
+```{r get_d0mm}
+d0mm <- data[["wattisham"]] %>%
+  mutate(occur = as.numeric(prcp_amt > 0))
+```
+
+Below fits the occurrence and amounts model for a 0mm / 6hr threshold.
+
+As above, the models have been fitted separately and the outputs saved and these can be loaded below.
+
+```{r load_fit_0mm}
+# Load the 0mm threshold weather generator fit into the environment.
+load("fits/fit_wattisham_0mm.RData")
+```
+
+```{r fit_0mm}
+# # Uncomment and run to fit the occurrence and amounts models for Wattisham, with storm types
+# 
+# occ_fit_0mm <- occ_fit_kfold_brms(
+#     data = d0mm,
+#     formula = occurrence_formula_with_st,
+#     priors = occurrence_priors_with_st,
+#     iter = 2000,
+#     cores = 4
+#     )
+# gc()
+# amt_fit_0mm <- amt_fit_kfold_brms(
+#     data = d0mm,
+#     formula = prcp_amt ~ -1 + (sin_doy + cos_doy + w500 + q850) * storm_type - sin_doy - cos_doy - w500 - q850,
+#     priors = amounts_priors_with_st,
+#     iter = 2000,
+#     cores = 4
+#     )
+```
+
+```{r save_fit_0mm}
+# # Uncomment and run to save the 0mm threshold weather generator fit as a .RData file.
+# save(occ_fit_0mm, amt_fit_0mm, file = "fit_wattisham_0mm.RData")
+```
+
+The PIT histogram for Wattisham is below. The model with a threshold of 0 mm / 6hrs is clearly miscalibrated for low and high precipitation.
+
+```{r get_PIT_0mm}
+yrep <- amt_fit_0mm$yrep[,which(amt_fit_0mm$y > 0)]
+y <- amt_fit_0mm$y[which(amt_fit_0mm$y > 0)]
+      
+amt_PIT_0mm <- apply(t(yrep) - y, MARGIN = 1, FUN = get_PIT)
+```
+
+```{r}
+data.frame(PIT = amt_PIT_0mm) %>%
+  ggplot() +
+  geom_density(aes(x = PIT, linetype = "0 mm / 6hr"), bounds = c(0,1)) +
+  geom_density(data = filter(df_amt_pit, station == "wattisham"),
+               aes(x = yes, linetype = "1 mm / 6hr"), bounds = c(0,1))+
+  geom_hline(aes(yintercept = 1), linetype = "dashed", color = "red") + 
+  scale_linetype_manual(name = "threshold", values = c(`1 mm / 6hr` = 1, `0 mm / 6hr` = 2))
+```

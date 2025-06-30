@@ -1,0 +1,2 @@
+"0","# # Uncomment and run to save the weather generator fit as a .RData file."
+"0","# save(occ_fit_list, amt_fit_list, file = ""storm_wg_fit.RData"")"

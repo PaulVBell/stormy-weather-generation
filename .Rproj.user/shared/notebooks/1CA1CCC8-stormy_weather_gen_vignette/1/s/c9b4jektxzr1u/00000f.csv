@@ -1,0 +1,3 @@
+"0","v <- function(z, mean, sd) {"
+"0","  (z - mean)*pnorm(z, mean = mean, sd = sd) + (sd^2)*dnorm(z,mean = mean, sd = sd)"
+"0","}"

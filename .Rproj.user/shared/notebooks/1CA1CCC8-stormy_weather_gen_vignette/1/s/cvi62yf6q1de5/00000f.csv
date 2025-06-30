@@ -1,0 +1,1 @@
+"0","crps_df <- bind_rows(lapply(crps_list, data.frame, row.names = NULL), .id = ""station"") "

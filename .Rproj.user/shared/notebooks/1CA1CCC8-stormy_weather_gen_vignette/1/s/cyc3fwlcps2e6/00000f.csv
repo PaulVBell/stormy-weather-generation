@@ -1,0 +1,3 @@
+"0","amt_crps_df %>%"
+"0","  group_by(station) %>%"
+"0","  summarise(`average amounts crps with storm types` = mean(yes), `average amounts crps without storm types` = mean(no))"

@@ -1,0 +1,5 @@
+"0","add_prcp_adj_occur <- function(df, prcp_thresh){"
+"0","  df %>%"
+"0","    mutate(prcp_amt_adj = (abs(prcp_amt - prcp_thresh) + (prcp_amt - prcp_thresh)) / 2) %>%"
+"0","    mutate(occur = as.numeric(prcp_amt_adj > 0))"
+"0","  }"

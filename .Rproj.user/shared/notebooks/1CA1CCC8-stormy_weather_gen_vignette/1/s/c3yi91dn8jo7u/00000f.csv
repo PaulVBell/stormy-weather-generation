@@ -1,0 +1,4 @@
+"0","yrep <- amt_fit_0mm$yrep[,which(amt_fit_0mm$y > 0)]"
+"0","y <- amt_fit_0mm$y[which(amt_fit_0mm$y > 0)]"
+"0","      "
+"0","amt_PIT_0mm <- apply(t(yrep) - y, MARGIN = 1, FUN = get_PIT)"

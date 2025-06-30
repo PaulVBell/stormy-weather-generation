@@ -1,0 +1,6 @@
+"0","df_amt_pit %>%"
+"0","  pivot_longer(c(""yes"", ""no""), names_to = ""types"", values_to = ""PIT"") %>%"
+"0","  ggplot() +"
+"0","  geom_density(aes(x = PIT), bounds = c(0,1)) +"
+"0","  geom_hline(aes(yintercept = 1), colour = ""red"", linetype = ""dashed"") +"
+"0","  facet_grid(types~station)"

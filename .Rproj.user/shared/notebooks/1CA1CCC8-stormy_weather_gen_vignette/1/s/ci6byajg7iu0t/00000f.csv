@@ -1,0 +1,6 @@
+"0","resample <- function(x, ...) x[sample.int(length(x), ...)]"
+"0",""
+"0","get_PIT <- function(x){"
+"0","  sorted <- abs(sort(x))"
+"0","  resample(which(sorted == min(sorted)),size = 1)/length(x)"
+"0","}"
